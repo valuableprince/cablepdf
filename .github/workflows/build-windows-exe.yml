@@ -1,0 +1,77 @@
+name: Build CablePDFCompare Windows EXE
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/build-windows-exe.yml'
+      - 'source/SKP_CableCompare_v0.8_Beta_Source_WindowsBuild.zip'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows-x64:
+    name: Test and build Windows x64 EXE
+    runs-on: windows-2022
+    timeout-minutes: 30
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Unpack application source
+        shell: pwsh
+        run: |
+          Expand-Archive -LiteralPath "source/SKP_CableCompare_v0.8_Beta_Source_WindowsBuild.zip" -DestinationPath "workspace" -Force
+          if (-not (Test-Path "workspace/SKP_v0.8/app/skp_gui.py")) {
+            throw "Missing source code in archive"
+          }
+
+      - name: Set up Python 3.11 x64
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          architecture: 'x64'
+          cache: 'pip'
+          cache-dependency-path: 'workspace/SKP_v0.8/requirements-build.txt'
+
+      - name: Install dependencies
+        working-directory: workspace/SKP_v0.8
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-build.txt
+
+      - name: Run unit tests
+        shell: pwsh
+        working-directory: workspace/SKP_v0.8
+        run: |
+          $env:PYTHONPATH = (Resolve-Path "./app").Path
+          python -m unittest discover -s tests -p "test_*.py" -v
+
+      - name: Build standalone single-file EXE
+        working-directory: workspace/SKP_v0.8
+        shell: pwsh
+        run: |
+          python -m PyInstaller --noconfirm --clean --onefile --windowed --name "SKP_CableCompare" --icon "app/CablePDFCompare.ico" --add-data "app/CablePDFCompare.ico;." --paths "app" "app/Сверка_кабелей_и_проходок.py"
+          if (-not (Test-Path "dist/SKP_CableCompare.exe")) {
+            throw "Standalone EXE not produced"
+          }
+          Get-Item "dist/SKP_CableCompare.exe" | Select-Object Name, Length
+
+      - name: Create SHA256 checksum
+        shell: pwsh
+        working-directory: workspace/SKP_v0.8
+        run: |
+          $hash = (Get-FileHash "dist/SKP_CableCompare.exe" -Algorithm SHA256).Hash.ToLower()
+          "$hash *SKP_CableCompare.exe" | Set-Content -Encoding Ascii "dist/SKP_CableCompare.exe.sha256"
+
+      - name: Upload Windows EXE
+        uses: actions/upload-artifact@v4
+        with:
+          name: SKP_CableCompare-v0.8-beta-Windows-x64
+          path: |
+            workspace/SKP_v0.8/dist/SKP_CableCompare.exe
+            workspace/SKP_v0.8/dist/SKP_CableCompare.exe.sha256
+          if-no-files-found: error
+          retention-days: 30
